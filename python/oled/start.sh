@@ -47,10 +47,10 @@ if [ $ERROR = 1 ] ; then
   exit 1
 fi
 
-if pgrep -f "python3 rascsi_oled_monitor.py" &> /dev/null; then
+if pgrep -f "python3 src/rascsi_oled_monitor.py" &> /dev/null; then
     echo "Detected active rascsi_oled_monitor.py process"
     echo "Terminating before launching a new one."
-    sudo pkill -f "python3 rascsi_oled_monitor.py"
+    sudo pkill -f "python3 src/rascsi_oled_monitor.py"
 fi
 
 if ! i2cdetect -y 1 &> /dev/null ; then
@@ -84,7 +84,9 @@ if ! test -e venv; then
     echo "Installing requirements.txt"
     pip3 install wheel
     CFLAGS="$COMPILER_FLAGS" pip3 install -r requirements.txt
-    git rev-parse HEAD > current
+    if [ -d .git ]; then
+      git rev-parse HEAD > current
+    fi
 fi
 
 source venv/bin/activate
@@ -139,4 +141,4 @@ if [ -z ${HEIGHT+x} ]; then
 else
     echo "Starting with parameter $HEIGHT"
 fi
-python3 rascsi_oled_monitor.py ${ROTATION} ${HEIGHT} ${PASSWORD}
+python3 src/rascsi_oled_monitor.py ${ROTATION} ${HEIGHT} ${PASSWORD}
