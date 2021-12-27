@@ -50,7 +50,8 @@ USER=$(whoami)
 BASE=$(dirname "$(readlink -f "${0}")")
 VIRTUAL_DRIVER_PATH="$HOME/images"
 CFG_PATH="$HOME/.config/rascsi"
-WEB_INSTALL_PATH="$BASE/src/web"
+WEB_INSTALL_PATH="$BASE/python/web"
+OLED_INSTALL_PATH="$BASE/python/oled"
 SYSTEMD_PATH="/etc/systemd/system"
 HFS_FORMAT=/usr/bin/hformat
 HFDISK_BIN=/usr/bin/hfdisk
@@ -102,102 +103,12 @@ function installRaScsiWebInterface() {
     echo "Compiling the Python protobuf library rascsi_interface_pb2.py..."
     protoc -I="$BASE/src/raspberrypi/" --python_out="$WEB_INSTALL_PATH" rascsi_interface.proto
 
-    sudo cp -f "$BASE/src/web/service-infra/nginx-default.conf" /etc/nginx/sites-available/default
-    sudo cp -f "$BASE/src/web/service-infra/502.html" /var/www/html/502.html
+    sudo cp -f "$WEB_INSTALL_PATH/service-infra/nginx-default.conf" /etc/nginx/sites-available/default
+    sudo cp -f "$WEB_INSTALL_PATH/service-infra/502.html" /var/www/html/502.html
 
-    sudo usermod -a -G $USER www-data
+    sudo usermod -a -G "$USER" www-data
 
     sudo systemctl reload nginx || true
-}
-
-# updates configuration files and installs packages needed for the OLED screen script
-function installRaScsiScreen() {
-    echo "IMPORTANT: This configuration requires a OLED screen to be installed onto your RaSCSI board."
-    echo "See wiki for more information: https://github.com/akuker/RASCSI/wiki/OLED-Status-Display-(Optional)"
-    echo ""
-    echo "Choose screen rotation:"
-    echo "  1) 0 degrees"
-    echo "  2) 180 degrees (default)"
-    read REPLY
-
-    if [ "$REPLY" == "1" ]; then
-        echo "Proceeding with 0 degrees rotation."
-        ROTATION="0"
-    else
-        echo "Proceeding with 180 degrees rotation."
-        ROTATION="180"
-    fi
-
-    echo ""
-    echo "Choose screen resolution:"
-    echo "  1) 128x32 pixels (default)"
-    echo "  2) 128x64 pixels"
-    read REPLY
-
-    if [ "$REPLY" == "2" ]; then
-        echo "Proceeding with 128x64 pixel resolution."
-        SCREEN_HEIGHT="64"
-    else
-        echo "Proceeding with 128x32 pixel resolution."
-        SCREEN_HEIGHT="32"
-    fi
-
-    echo ""
-    echo "Is RaSCSI using token-based authentication? [y/N]"
-    read -r REPLY
-    if [ "$REPLY" == "y" ] || [ "$REPLY" == "Y" ]; then
-        echo -n "Enter the passphrase that you configured: "
-        read -r TOKEN
-    fi
-
-    stopRaScsiScreen
-    updateRaScsiGit
-
-    sudo apt-get update && sudo apt-get install libjpeg-dev libpng-dev libopenjp2-7-dev i2c-tools raspi-config -y </dev/null
-
-    if [ -f "$BASE/src/oled_monitor/rascsi_interface_pb2.py" ]; then
-        sudo rm "$BASE/src/oled_monitor/rascsi_interface_pb2.py"
-        echo "Deleting old Python protobuf library rascsi_interface_pb2.py"
-    fi
-    echo "Compiling the Python protobuf library rascsi_interface_pb2.py..."
-    protoc -I="$BASE/src/raspberrypi/" --python_out="$BASE/src/oled_monitor" rascsi_interface.proto
-
-    if [[ $(grep -c "^dtparam=i2c_arm=on" /boot/config.txt) -ge 1 ]]; then
-        echo "NOTE: I2C support seems to have been configured already."
-        REBOOT=0
-    else
-        sudo raspi-config nonint do_i2c 0 </dev/null
-        echo "Modified the Raspberry Pi boot configuration to enable I2C."
-        echo "A reboot will be required for the change to take effect."
-        REBOOT=1
-    fi
-
-    echo "Installing the monitor_rascsi.service configuration..."
-    sudo cp -f "$BASE/src/oled_monitor/monitor_rascsi.service" "$SYSTEMD_PATH/monitor_rascsi.service"
-    sudo sed -i /^ExecStart=/d "$SYSTEMD_PATH/monitor_rascsi.service"
-    if [ ! -z "$TOKEN" ]; then
-        sudo sed -i "8 i ExecStart=$BASE/src/oled_monitor/start.sh --rotation=$ROTATION --height=$SCREEN_HEIGHT --password=$TOKEN" "$SYSTEMD_PATH/monitor_rascsi.service"
-        sudo chmod 600 "$SYSTEMD_PATH/monitor_rascsi.service"
-        echo "Granted access to the OLED Monitor with the token passphrase that you configured for RaSCSI."
-    else
-        sudo sed -i "8 i ExecStart=$BASE/src/oled_monitor/start.sh --rotation=$ROTATION --height=$SCREEN_HEIGHT" "$SYSTEMD_PATH/monitor_rascsi.service"
-    fi
-
-    sudo systemctl daemon-reload
-    sudo systemctl enable monitor_rascsi
-
-    if [ $REBOOT -eq 1 ]; then
-        echo ""
-        echo "The monitor_rascsi service will start on the next Pi boot."
-        echo "Press Enter to reboot or CTRL-C to exit"
-        read
-
-        echo "Rebooting..."
-        sleep 3
-        sudo reboot
-    fi
-
-    sudo systemctl start monitor_rascsi
 }
 
 # Creates the dir that RaSCSI uses to store image files
@@ -312,7 +223,7 @@ function enableRaScsiService() {
 # Modifies and installs the rascsi-web service
 function installWebInterfaceService() {
     echo "Installing the rascsi-web.service configuration..."
-    sudo cp -f "$BASE/src/web/service-infra/rascsi-web.service" "$SYSTEMD_PATH/rascsi-web.service"
+    sudo cp -f "$WEB_INSTALL_PATH/service-infra/rascsi-web.service" "$SYSTEMD_PATH/rascsi-web.service"
     sudo sed -i /^ExecStart=/d "$SYSTEMD_PATH/rascsi-web.service"
     echo "$TOKEN"
     if [ ! -z "$TOKEN" ]; then
@@ -330,22 +241,59 @@ function installWebInterfaceService() {
 
 # Stops the rascsi service if it is running
 function stopRaScsi() {
-    if [ -f "$SYSTEMD_PATH/rascsi.service" ]; then
-        sudo systemctl stop rascsi.service
+    if [[ -f "$SYSTEMD_PATH/rascsi.service" ]]; then
+        SERVICE_RASCSI_RUNNING=0
+        sudo systemctl is-active --quiet rascsi.service >/dev/null 2>&1 || SERVICE_RASCSI_RUNNING=$?
+        if [[ $SERVICE_RASCSI_RUNNING -eq 0 ]]; then
+            sudo systemctl stop rascsi.service
+        fi
     fi
 }
 
 # Stops the rascsi-web service if it is running
 function stopRaScsiWeb() {
-    if [ -f "$SYSTEMD_PATH/rascsi-web.service" ]; then
-        sudo systemctl stop rascsi-web.service
+    if [[ -f "$SYSTEMD_PATH/rascsi-web.service" ]]; then
+        SERVICE_RASCSI_WEB_RUNNING=0
+        sudo systemctl is-active --quiet rascsi-web.service >/dev/null 2>&1 || SERVICE_RASCSI_WEB_RUNNING=$?
+        if [[ $SERVICE_RASCSI_WEB_RUNNING -eq 0 ]]; then
+            sudo systemctl stop rascsi-web.service
+        fi
     fi
 }
 
-# Stops the monitor_rascsi service if it is running
+# Stops the rascsi-oled service if it is running
 function stopRaScsiScreen() {
+    if [[ -f "$SYSTEMD_PATH/monitor_rascsi.service" ]]; then
+        SERVICE_MONITOR_RASCSI_RUNNING=0
+        sudo systemctl is-active --quiet monitor_rascsi.service >/dev/null 2>&1 || SERVICE_MONITOR_RASCSI_RUNNING=$?
+        if [[ $SERVICE_MONITOR_RASCSI_RUNNING -eq 0 ]]; then
+          sudo systemctl stop monitor_rascsi.service
+        fi
+    fi
+    if [[ -f "$SYSTEMD_PATH/rascsi-oled.service" ]]; then
+        SERVICE_RASCSI_OLED_RUNNING=0
+        sudo systemctl is-active --quiet rascsi-oled.service >/dev/null 2>&1 || SERVICE_RASCSI_OLED_RUNNING=$?
+        if  [[ $SERVICE_RASCSI_OLED_RUNNING -eq 0 ]]; then
+          sudo systemctl stop rascsi-oled.service
+        fi
+    fi
+}
+
+# disables and removes the old monitor_rascsi service
+function disableOldRaScsiMonitorService() {
     if [ -f "$SYSTEMD_PATH/monitor_rascsi.service" ]; then
-        sudo systemctl stop monitor_rascsi.service
+        SERVICE_MONITOR_RASCSI_RUNNING=0
+        sudo systemctl is-active --quiet monitor_rascsi.service >/dev/null 2>&1 || SERVICE_MONITOR_RASCSI_RUNNING=$?
+        if [[ $SERVICE_MONITOR_RASCSI_RUNNING -eq 0 ]]; then
+          sudo systemctl stop monitor_rascsi.service
+        fi
+
+        SERVICE_MONITOR_RASCSI_ENABLED=0
+        sudo systemctl is-enabled --quiet monitor_rascsi.service >/dev/null 2>&1 || SERVICE_MONITOR_RASCSI_ENABLED=$?
+        if [[ $SERVICE_MONITOR_RASCSI_ENABLED -eq 0 ]]; then
+          sudo systemctl disable monitor_rascsi.service
+        fi
+        sudo rm $SYSTEMD_PATH/monitor_rascsi.service
     fi
 }
 
@@ -356,11 +304,17 @@ function stopMacproxy() {
     fi
 }
 
-# Starts the monitor_rascsi service if installed
+# Starts the rascsi-oled service if installed
 function startRaScsiScreen() {
-    if [ -f "$SYSTEMD_PATH/monitor_rascsi.service" ]; then
-        sudo systemctl start monitor_rascsi.service
-        showRaScsiScreenStatus
+    if [[ -f "$SYSTEMD_PATH/rascsi-oled.service" ]]; then
+        SERVICE_RASCSI_OLED_ENABLED=0
+        sudo systemctl is-enabled --quiet rascsi-oled.service >/dev/null 2>&1 || SERVICE_RASCSI_OLED_ENABLED=$?
+        SERVICE_RASCSI_OLED_RUNNING=0
+        sudo systemctl is-active --quiet rascsi-oled.service >/dev/null 2>&1 || SERVICE_RASCSI_OLED_RUNNING=$?
+        if [[ $SERVICE_RASCSI_OLED_ENABLED -eq 0 ]] && [[ $SERVICE_RASCSI_OLED_RUNNING -ne 0 ]]; then
+          sudo systemctl start rascsi-oled.service
+          showRaScsiScreenStatus
+        fi
     fi
 }
 
@@ -382,9 +336,9 @@ function showRaScsiWebStatus() {
     systemctl status rascsi-web | tee
 }
 
-# Shows status for the monitor_rascsi service
+# Shows status for the rascsi-oled service
 function showRaScsiScreenStatus() {
-    systemctl status monitor_rascsi | tee
+    systemctl status rascsi-oled | tee
 }
 
 # Shows status for the macproxy service
@@ -747,6 +701,100 @@ function installMacproxy {
     echo " port $PORT"
     echo "Configure your browser to use the above as http (and https) proxy."
     echo ""
+}
+
+# updates configuration files and installs packages needed for the OLED screen script
+function installRaScsiScreen() {
+    echo "IMPORTANT: This configuration requires a OLED screen to be installed onto your RaSCSI board."
+    echo "See wiki for more information: https://github.com/akuker/RASCSI/wiki/OLED-Status-Display-(Optional)"
+    echo ""
+    echo "Choose screen rotation:"
+    echo "  1) 0 degrees"
+    echo "  2) 180 degrees (default)"
+    read REPLY
+
+    if [ "$REPLY" == "1" ]; then
+        echo "Proceeding with 0 degrees rotation."
+        ROTATION="0"
+    else
+        echo "Proceeding with 180 degrees rotation."
+        ROTATION="180"
+    fi
+
+    echo ""
+    echo "Choose screen resolution:"
+    echo "  1) 128x32 pixels (default)"
+    echo "  2) 128x64 pixels"
+    read REPLY
+
+    if [ "$REPLY" == "2" ]; then
+        echo "Proceeding with 128x64 pixel resolution."
+        SCREEN_HEIGHT="64"
+    else
+        echo "Proceeding with 128x32 pixel resolution."
+        SCREEN_HEIGHT="32"
+    fi
+
+    echo ""
+    echo "Is RaSCSI using token-based authentication? [y/N]"
+    read -r REPLY
+    if [ "$REPLY" == "y" ] || [ "$REPLY" == "Y" ]; then
+        echo -n "Enter the passphrase that you configured: "
+        read -r TOKEN
+    fi
+
+    stopRaScsiScreen
+    updateRaScsiGit
+
+    sudo apt-get update && sudo apt-get install libjpeg-dev libpng-dev libopenjp2-7-dev i2c-tools raspi-config -y </dev/null
+
+    if [ -f "$OLED_INSTALL_PATH/src/rascsi_interface_pb2.py" ]; then
+        sudo rm "$OLED_INSTALL_PATH/src/rascsi_interface_pb2.py"
+        echo "Deleting old Python protobuf library rascsi_interface_pb2.py"
+    fi
+    echo "Compiling the Python protobuf library rascsi_interface_pb2.py..."
+    protoc -I="$BASE/src/raspberrypi/" --python_out="$OLED_INSTALL_PATH/src" rascsi_interface.proto
+
+    if [[ $(grep -c "^dtparam=i2c_arm=on" /boot/config.txt) -ge 1 ]]; then
+        echo "NOTE: I2C support seems to have been configured already."
+        REBOOT=0
+    else
+        sudo raspi-config nonint do_i2c 0 </dev/null
+        echo "Modified the Raspberry Pi boot configuration to enable I2C."
+        echo "A reboot will be required for the change to take effect."
+        REBOOT=1
+    fi
+
+    echo "Installing the rascsi-oled.service configuration..."
+    sudo cp -f "$OLED_INSTALL_PATH/service-infra/rascsi-oled.service" "$SYSTEMD_PATH/rascsi-oled.service"
+    sudo sed -i /^ExecStart=/d "$SYSTEMD_PATH/rascsi-oled.service"
+    if [ ! -z "$TOKEN" ]; then
+        sudo sed -i "8 i ExecStart=$OLED_INSTALL_PATH/start.sh --rotation=$ROTATION --height=$SCREEN_HEIGHT --password=$TOKEN" "$SYSTEMD_PATH/rascsi-oled.service"
+        sudo chmod 600 "$SYSTEMD_PATH/rascsi-oled.service"
+        echo "Granted access to the OLED Monitor with the token passphrase that you configured for RaSCSI."
+    else
+        sudo sed -i "8 i ExecStart=$OLED_INSTALL_PATH/start.sh --rotation=$ROTATION --height=$SCREEN_HEIGHT" "$SYSTEMD_PATH/rascsi-oled.service"
+    fi
+
+    sudo systemctl daemon-reload
+
+    # ensure that the old monitor_rascsi service is disabled and removed before the new one is installed
+    disableOldRaScsiMonitorService
+
+    sudo systemctl enable rascsi-oled
+
+    if [ $REBOOT -eq 1 ]; then
+        echo ""
+        echo "The rascsi-oled service will start on the next Pi boot."
+        echo "Press Enter to reboot or CTRL-C to exit"
+        read
+
+        echo "Rebooting..."
+        sleep 3
+        sudo reboot
+    fi
+
+    sudo systemctl start rascsi-oled
 }
 
 # Prints a notification if the rascsi.service file was backed up
