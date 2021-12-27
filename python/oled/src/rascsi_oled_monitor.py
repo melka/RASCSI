@@ -136,12 +136,12 @@ LINE_SPACING = 8
 # When using other fonts, you may need to adjust PADDING, FONT_SIZE,
 # LINE_SPACING, and LINES.
 # Some other nice fonts to try: http://www.dafont.com/bitmap.php
-FONT = ImageFont.truetype('type_writer.ttf', FONT_SIZE)
+FONT = ImageFont.truetype('resources/type_writer.ttf', FONT_SIZE)
 
 # Load a bitmap image for start and stop splash screens and convert to monocrome
 # Make sure the splash bitmap image is in the same dir as this script
-SPLASH_START = Image.open(f"splash_start_{HEIGHT}.bmp").convert("1")
-SPLASH_STOP = Image.open(f"splash_stop_{HEIGHT}.bmp").convert("1")
+SPLASH_START = Image.open(f"resources/splash_start_{HEIGHT}.bmp").convert("1")
+SPLASH_STOP = Image.open(f"resources/splash_stop_{HEIGHT}.bmp").convert("1")
 
 IP_ADDR, HOSTNAME = get_ip_and_host()
 
