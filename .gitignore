@@ -6,9 +6,9 @@ core
 *.swp
 __pycache__
 python/web/current
-python/web/rascsi_interface_pb2.py
+python/web/src/rascsi_interface_pb2.py
 python/oled/current
-python/oled/rascsi_interface_pb2.py
+python/oled/src/rascsi_interface_pb2.py
 src/raspberrypi/hfdisk/
 *~
 messages.pot
