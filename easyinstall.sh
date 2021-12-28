@@ -101,7 +101,7 @@ function installRaScsiWebInterface() {
         echo "Deleting old Python protobuf library rascsi_interface_pb2.py"
     fi
     echo "Compiling the Python protobuf library rascsi_interface_pb2.py..."
-    protoc -I="$BASE/src/raspberrypi/" --python_out="$WEB_INSTALL_PATH" rascsi_interface.proto
+    protoc -I="$BASE/src/raspberrypi/" --python_out="$WEB_INSTALL_PATH/src" rascsi_interface.proto
 
     sudo cp -f "$WEB_INSTALL_PATH/service-infra/nginx-default.conf" /etc/nginx/sites-available/default
     sudo cp -f "$WEB_INSTALL_PATH/service-infra/502.html" /var/www/html/502.html
